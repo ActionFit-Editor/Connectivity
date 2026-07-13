@@ -1,0 +1,67 @@
+# ActionFit Connectivity (`com.actionfit.connectivity`)
+
+게임 UI와 SDK에 의존하지 않는 인터넷 연결 상태, 즉시 검사, 재시도, 복구 대기와 자동 모니터링 API를 제공합니다.
+
+## 주요 기능
+
+- `Unknown`, `Checking`, `Online`, `Offline` 상태를 제공하는 `ConnectivityService`
+- OS reachability 조기 판정과 주입 가능한 실제 네트워크 probe
+- 즉시 1회 검사와 설정된 횟수만큼 재시도하는 검사 분리
+- 연결 복구를 기다리는 `WaitForOnlineAsync`
+- 자동 모니터링의 시작, 중지, Pause, Resume
+- Unity용 `Application.internetReachability`, ICMP Ping, `UnityWebRequest` HEAD 어댑터
+- UI, 광고, 분석, Firebase, 게임 초기화 코드와 분리된 인터페이스
+
+## 기본 사용법
+
+```csharp
+using ActionFit.Connectivity;
+
+var service = new ConnectivityService(
+    new UnityReachabilityProvider(),
+    new FallbackConnectivityProbe(
+        new UnityPingConnectivityProbe("8.8.8.8"),
+        new UnityWebRequestConnectivityProbe()),
+    new ConnectivityOptions(
+        "https://clients3.google.com/generate_204",
+        probeTimeoutSeconds: 5f,
+        checkIntervalSeconds: 30f,
+        retryIntervalSeconds: 3f,
+        maxRetryCount: 3));
+
+service.StateChanged += state => UnityEngine.Debug.Log(state);
+service.StartMonitoring();
+```
+
+`CheckNowAsync`는 즉시 1회만 검사합니다. `CheckWithRetryAsync`는 첫 검사 실패 후 `MaxRetryCount`만큼 추가 검사합니다. `WaitForOnlineAsync`는 자동 모니터링을 암묵적으로 시작하지 않으므로, 호출자가 먼저 `StartMonitoring`을 실행하거나 별도 검사를 발생시켜야 합니다.
+
+## 프로젝트 어댑터
+
+Cat Merge Cafe는 기존 정적 `InternetCheck` API와 `InternetCheckSO` 직렬화 설정을 호환 facade로 유지합니다. 다른 프로젝트에서는 UI 표시, SDK 대기, 앱 lifecycle 전달을 각 프로젝트 어댑터에서 연결하세요.
+
+패키지는 HTTP HEAD probe를 위해 Unity 기본 모듈 `com.unity.modules.unitywebrequest` 1.0.0을 자동 의존합니다.
+
+## 설치
+
+현재 Cat Merge Cafe에서는 embedded package로 사용합니다. 수동 게시 후 다른 프로젝트의 `Packages/manifest.json`에는 다음 Git UPM 주소를 사용합니다.
+
+```json
+"com.actionfit.connectivity": "https://github.com/ActionFit-Editor/Connectivity.git#1.0.0"
+```
+
+## Unity Menu
+
+- Package root: `Tools > Package > ActionFit Connectivity`
+- README: `Tools > Package > ActionFit Connectivity > README`
+
+## 테스트
+
+Unity Test Framework의 EditMode에서 `com.actionfit.connectivity.Editor.Tests`를 실행하면 상태 전이, OS offline 조기 판정, probe 결과, 재시도, 복구 대기, Pause/Resume와 fallback 순서를 검증할 수 있습니다.
+
+## 주의사항
+
+- reachability가 가능하다는 사실만으로 Online을 확정하지 말고 실제 probe 성공을 함께 확인하세요.
+- probe endpoint는 민감한 응답 본문이나 인증이 필요 없는 안정적인 HTTP/HTTPS 주소를 사용하세요.
+- 상태 변경 이벤트에서 게임 UI나 SDK를 직접 참조하지 말고 프로젝트 어댑터 계층에서 연결하세요.
+- `StopMonitoring`은 구독자를 제거하지 않습니다. 서비스 소유자가 구독 lifecycle을 별도로 관리해야 합니다.
+- 패키지 공개 async 계약은 다른 Unity 프로젝트에서 추가 패키지 없이 사용할 수 있도록 .NET `Task`를 사용합니다. Cat Merge Cafe의 기존 facade는 이를 `UniTask`로 await합니다.

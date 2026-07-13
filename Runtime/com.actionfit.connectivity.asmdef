@@ -1,0 +1,14 @@
+{
+  "name": "com.actionfit.connectivity",
+  "rootNamespace": "ActionFit.Connectivity",
+  "references": [],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

@@ -1,0 +1,13 @@
+{
+  "name": "com.actionfit.connectivity",
+  "version": "1.0.0",
+  "displayName": "ActionFit Connectivity",
+  "description": "Reusable connectivity state, retry, monitoring, and Unity reachability/probe adapters without game or SDK coupling.",
+  "unity": "6000.2",
+  "author": {
+    "name": "ActionFit"
+  },
+  "dependencies": {
+    "com.unity.modules.unitywebrequest": "1.0.0"
+  }
+}

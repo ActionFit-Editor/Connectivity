@@ -1,0 +1,23 @@
+{
+  "name": "com.actionfit.connectivity.Editor.Tests",
+  "rootNamespace": "ActionFit.Connectivity.Tests",
+  "references": [
+    "com.actionfit.connectivity"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": false,
+  "defineConstraints": [
+    "UNITY_INCLUDE_TESTS"
+  ],
+  "versionDefines": [],
+  "noEngineReferences": false,
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ]
+}
