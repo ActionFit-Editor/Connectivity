@@ -1,0 +1,4 @@
+interface:
+  display_name: "Audit Connectivity"
+  short_description: "Audit connectivity safety contracts without writes"
+  default_prompt: "Use $connectivity-audit to audit connectivity state, probe, retry, cancellation, and monitoring contracts."

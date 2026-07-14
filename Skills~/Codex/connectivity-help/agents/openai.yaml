@@ -1,0 +1,4 @@
+interface:
+  display_name: "Connectivity Help"
+  short_description: "Explain connectivity contracts and package usage"
+  default_prompt: "Use $connectivity-help to explain ActionFit Connectivity skills, runtime contracts, testing, and safety boundaries."

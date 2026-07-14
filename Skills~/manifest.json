@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 2,
+  "skillPrefix": "connectivity",
+  "helpSkill": "connectivity-help",
+  "skills": [
+    {
+      "name": "connectivity-help",
+      "agents": [
+        "codex",
+        "claude"
+      ],
+      "includeShared": false,
+      "access": "read-only"
+    },
+    {
+      "name": "connectivity-audit",
+      "agents": [
+        "codex",
+        "claude"
+      ],
+      "includeShared": false,
+      "access": "read-only"
+    }
+  ]
+}

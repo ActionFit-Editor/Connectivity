@@ -6,8 +6,8 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 
 - Package ID: `com.actionfit.connectivity`
 - Display name: ActionFit Connectivity
-- Repository: `https://github.com/ActionFit-Editor/Connectivity.git`
-- Current package version at generation time: `1.0.0`
+- Repository: `https://github.com/ActionFitGames/Connectivity.git`
+- Current package version at generation time: `1.0.2`
 - Unity version: `6000.2`
 - Runtime dependency: Unity built-in module `com.unity.modules.unitywebrequest` `1.0.0`
 
@@ -16,6 +16,12 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 ActionFit Connectivity provides reusable connectivity state, reachability/probe composition, retry, recovery waiting, automatic monitoring, and Pause/Resume behavior without depending on game UI, advertising, analytics, Firebase, or initialization managers.
 
 The package owns connectivity evaluation only. Consuming projects own endpoint selection, configuration persistence, UI presentation, SDK gating, application lifecycle forwarding, and product-specific retry decisions.
+
+## Agent Skills
+
+- `Skills~/manifest.json` registers schema v2 `connectivity-help` and `connectivity-audit` for Codex and Claude with read-only access.
+- Help reads the generated `PACKAGE_SKILLS.md` inventory before explaining state, probe, retry, monitoring, tests, and adapter boundaries.
+- Audit inspects source and project adapters without starting monitoring, contacting a probe endpoint, invoking Unity, editing files, or changing package and project state. It compares Git status before and after inspection and reports missing evidence instead of mutating the repository.
 
 ## Project Router Registration
 
