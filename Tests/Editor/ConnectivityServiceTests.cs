@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
+using UnityEngine.Networking;
 
 namespace ActionFit.Connectivity.Tests
 {
@@ -192,6 +194,78 @@ namespace ActionFit.Connectivity.Tests
         public void Options_RejectInvalidProbeUrl(string probeUrl)
         {
             Assert.Throws<ArgumentException>(() => new ConnectivityOptions(probeUrl, 2f, 10f, 1f, 1));
+        }
+
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase("0")]
+        public void ObservationParser_ValidDateAndFreshAge_AcceptsServerDate(string ageHeader)
+        {
+            TimeSpan roundTrip = TimeSpan.FromMilliseconds(240);
+
+            ConnectivityObservation observation = ConnectivityObservationParser.Parse(
+                true,
+                204L,
+                "Wed, 15 Jul 2026 12:34:56 GMT",
+                ageHeader,
+                roundTrip);
+
+            Assert.That(observation.IsConnected, Is.True);
+            Assert.That(observation.HasFreshServerDate, Is.True);
+            Assert.That(observation.ServerDateUtc.Value.Offset, Is.EqualTo(TimeSpan.Zero));
+            Assert.That(observation.ServerDateUtc.Value.UtcDateTime.Kind, Is.EqualTo(DateTimeKind.Utc));
+            Assert.That(observation.RoundTripDuration, Is.EqualTo(roundTrip));
+        }
+
+        [TestCase(null, "3")]
+        [TestCase(null, "invalid")]
+        [TestCase(null, "-1")]
+        [TestCase("invalid", null)]
+        public void ObservationParser_StaleOrMalformedMetadata_RejectsServerDate(
+            string dateHeader,
+            string ageHeader)
+        {
+            dateHeader ??= "Wed, 15 Jul 2026 12:34:56 GMT";
+
+            ConnectivityObservation observation = ConnectivityObservationParser.Parse(
+                true,
+                204L,
+                dateHeader,
+                ageHeader,
+                TimeSpan.Zero);
+
+            Assert.That(observation.IsConnected, Is.True);
+            Assert.That(observation.HasFreshServerDate, Is.False);
+        }
+
+        [Test]
+        public void ObservationParser_HttpFailure_PreservesMetadataButRejectsServerDate()
+        {
+            ConnectivityObservation observation = ConnectivityObservationParser.Parse(
+                false,
+                503L,
+                "Wed, 15 Jul 2026 12:34:56 GMT",
+                null,
+                TimeSpan.FromSeconds(1));
+
+            Assert.That(observation.IsConnected, Is.False);
+            Assert.That(observation.ResponseCode, Is.EqualTo(503L));
+            Assert.That(observation.HasFreshServerDate, Is.False);
+        }
+
+        [Test]
+        public void ObservationProbe_CacheBypass_AddsStandardRequestDirectives()
+        {
+            using var request = UnityWebRequest.Head("https://example.com/connectivity");
+            MethodInfo method = typeof(UnityWebRequestConnectivityProbe).GetMethod(
+                "ApplyCacheBypassHeaders",
+                BindingFlags.NonPublic | BindingFlags.Static);
+
+            Assert.That(method, Is.Not.Null);
+            method.Invoke(null, new object[] { request });
+
+            Assert.That(request.GetRequestHeader("Cache-Control"), Is.EqualTo("no-cache, no-store, max-age=0"));
+            Assert.That(request.GetRequestHeader("Pragma"), Is.EqualTo("no-cache"));
         }
 
         private static async Task WaitUntilAsync(Func<bool> predicate)

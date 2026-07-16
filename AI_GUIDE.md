@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.connectivity`
 - Display name: ActionFit Connectivity
 - Repository: `https://github.com/ActionFitGames/Connectivity.git`
-- Current package version at generation time: `1.0.2`
+- Current package version at generation time: `1.0.3`
 - Unity version: `6000.2`
 - Runtime dependency: Unity built-in module `com.unity.modules.unitywebrequest` `1.0.0`
 
@@ -44,6 +44,8 @@ Read this file when:
 - `ConnectivityState` is `Unknown`, `Checking`, `Online`, or `Offline`.
 - `IConnectivityReachabilityProvider` supplies an OS-level `ConnectivityReachability` hint. Only `NotReachable` short-circuits a probe; `Unknown` still probes.
 - `IConnectivityProbe` performs the real remote check. Operational network failures should return `false`; cancellation should propagate.
+- `IConnectivityObservationProbe` performs one bounded HTTPS observation and returns connectivity success, response code, parsed UTC `Date`, optional parsed `Age`, and round-trip duration without exposing response bodies or arbitrary raw headers.
+- `ConnectivityObservation.HasFreshServerDate` requires successful HTTP 2xx/3xx connectivity, a valid UTC `Date`, a valid absent-or-nonnegative `Age`, and `Age` absent or zero.
 - `ConnectivityOptions` validates an absolute HTTP/HTTPS endpoint, positive timeout/check interval values, and a non-negative retry interval.
 - `ConnectivityService.CheckNowAsync` runs one attempt.
 - `ConnectivityService.CheckWithRetryAsync` runs one immediate attempt plus `MaxRetryCount` retries.
@@ -59,7 +61,7 @@ The public async contract deliberately uses the BCL `Task` type so the reusable 
 
 - `UnityReachabilityProvider` maps `Application.internetReachability`.
 - `UnityPingConnectivityProbe` performs the optional ICMP first attempt.
-- `UnityWebRequestConnectivityProbe` sends a HEAD request and accepts HTTP 2xx/3xx success.
+- `UnityWebRequestConnectivityProbe` sends a HEAD request and accepts HTTP 2xx/3xx success. Observation calls can add `Cache-Control: no-cache, no-store, max-age=0` and `Pragma: no-cache` and parse bounded response metadata before disposing the request.
 - `FallbackConnectivityProbe` tries probes in order and stops after the first success.
 
 Do not log endpoint response bodies, authentication material, raw user identifiers, or advertising identifiers from connectivity diagnostics.
@@ -80,6 +82,7 @@ Preserve these compatibility behaviors:
 
 - Run `com.actionfit.connectivity.Editor.Tests` in EditMode. Test Unknown initial state, Checking-to-stable transitions, OS NotReachable short-circuit, reachable/unknown probe use, retry count, later recovery, cancellation restoration, recovery wait, Pause/Resume, and fallback ordering.
 - Do not use a real public endpoint in unit tests. Inject fake reachability, probe, and delay implementations.
+- Test observation parsing with fixed headers and round-trip durations. A positive or malformed `Age`, missing or malformed `Date`, HTTP failure, or cancellation must not produce a fresh server date.
 - A probe cancellation is not Offline. Restore the last stable state and propagate cancellation.
 - Do not add hidden retries to `CheckNowAsync`; callers choose the retrying API explicitly.
 - Package code must not delete, migrate, or reset project data based on connectivity state.

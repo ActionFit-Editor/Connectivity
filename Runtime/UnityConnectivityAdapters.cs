@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -91,20 +92,46 @@ namespace ActionFit.Connectivity
         }
     }
 
-    public sealed class UnityWebRequestConnectivityProbe : IConnectivityProbe
+    public sealed class UnityWebRequestConnectivityProbe : IConnectivityProbe, IConnectivityObservationProbe
     {
-        public Task<bool> ProbeAsync(
+        public async Task<bool> ProbeAsync(
             Uri endpoint,
             TimeSpan timeout,
+            CancellationToken cancellationToken)
+        {
+            ConnectivityObservation observation = await SendAsync(
+                endpoint,
+                timeout,
+                false,
+                cancellationToken);
+            return observation.IsConnected;
+        }
+
+        public Task<ConnectivityObservation> ObserveAsync(
+            Uri endpoint,
+            TimeSpan timeout,
+            bool bypassCache,
+            CancellationToken cancellationToken)
+        {
+            return SendAsync(endpoint, timeout, bypassCache, cancellationToken);
+        }
+
+        private static Task<ConnectivityObservation> SendAsync(
+            Uri endpoint,
+            TimeSpan timeout,
+            bool bypassCache,
             CancellationToken cancellationToken)
         {
             if (endpoint == null) throw new ArgumentNullException(nameof(endpoint));
             cancellationToken.ThrowIfCancellationRequested();
 
-            var completion = new TaskCompletionSource<bool>(
+            var completion = new TaskCompletionSource<ConnectivityObservation>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             var request = UnityWebRequest.Head(endpoint.AbsoluteUri);
             request.timeout = Math.Max(1, (int)Math.Ceiling(timeout.TotalSeconds));
+            if (bypassCache) ApplyCacheBypassHeaders(request);
+
+            var stopwatch = Stopwatch.StartNew();
             UnityWebRequestAsyncOperation operation = request.SendWebRequest();
             CancellationTokenRegistration registration = default;
             int completed = 0;
@@ -114,14 +141,22 @@ namespace ActionFit.Connectivity
                 if (Interlocked.Exchange(ref completed, 1) != 0) return;
 
                 if (cancelled) request.Abort();
-                bool online = !cancelled
-                              && request.result == UnityWebRequest.Result.Success
-                              && request.responseCode >= 200
-                              && request.responseCode < 400;
+                stopwatch.Stop();
+                ConnectivityObservation observation = default;
+                if (!cancelled)
+                {
+                    observation = ConnectivityObservationParser.Parse(
+                        request.result == UnityWebRequest.Result.Success,
+                        request.responseCode,
+                        request.GetResponseHeader("Date"),
+                        request.GetResponseHeader("Age"),
+                        stopwatch.Elapsed);
+                }
+
                 registration.Dispose();
                 request.Dispose();
                 if (cancelled) completion.TrySetCanceled();
-                else completion.TrySetResult(online);
+                else completion.TrySetResult(observation);
             }
 
             operation.completed += _ => Complete(false);
@@ -131,6 +166,12 @@ namespace ActionFit.Connectivity
                 if (Volatile.Read(ref completed) != 0) registration.Dispose();
             }
             return completion.Task;
+        }
+
+        private static void ApplyCacheBypassHeaders(UnityWebRequest request)
+        {
+            request.SetRequestHeader("Cache-Control", "no-cache, no-store, max-age=0");
+            request.SetRequestHeader("Pragma", "no-cache");
         }
     }
 }
