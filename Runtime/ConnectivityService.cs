@@ -6,12 +6,15 @@ namespace ActionFit.Connectivity
 {
     public sealed class ConnectivityService : IConnectivityService
     {
+        private static readonly TimeSpan MonitoringGraceRetryInterval = TimeSpan.FromMilliseconds(250d);
+
         private readonly IConnectivityReachabilityProvider _reachability;
         private readonly IConnectivityProbe _probe;
         private readonly IConnectivityDelay _delay;
         private readonly ConnectivityOptions _options;
         private readonly SemaphoreSlim _checkGate = new SemaphoreSlim(1, 1);
         private CancellationTokenSource _monitorCancellation;
+        private CancellationTokenSource _monitoringGraceCancellation;
         private Task _monitorTask;
         private ConnectivityState _state = ConnectivityState.Unknown;
         private ConnectivityState _lastStableState = ConnectivityState.Unknown;
@@ -34,6 +37,12 @@ namespace ActionFit.Connectivity
         public bool IsMonitoring => _monitorTask != null;
 
         public event Action<ConnectivityState> StateChanged;
+
+        /// <summary>Published once after an Online monitor's first failed probe.</summary>
+        public event Action MonitoringDisconnectGraceStarted;
+
+        /// <summary>Published once before the monitor restores Online or publishes Offline.</summary>
+        public event Action<ConnectivityGraceOutcome> MonitoringDisconnectGraceEnded;
 
         /// <summary>Runs one reachability and probe attempt and publishes the resulting stable state.</summary>
         public Task<bool> CheckNowAsync(CancellationToken cancellationToken = default)
@@ -97,6 +106,7 @@ namespace ActionFit.Connectivity
         public void Pause()
         {
             _isPaused = true;
+            CancelMonitoringGrace();
         }
 
         /// <summary>Resumes automatic checks and performs one immediate check.</summary>
@@ -165,7 +175,12 @@ namespace ActionFit.Connectivity
                 while (!cancellationToken.IsCancellationRequested)
                 {
                     if (!_isPaused)
-                        await CheckWithRetryAsync(cancellationToken);
+                    {
+                        if (_lastStableState == ConnectivityState.Online)
+                            await CheckOnlineMonitoringAsync(cancellationToken);
+                        else
+                            await CheckWithRetryAsync(cancellationToken);
+                    }
 
                     TimeSpan delay = _isPaused ? _options.RetryInterval : _options.CheckInterval;
                     await _delay.DelayAsync(delay, cancellationToken);
@@ -174,6 +189,135 @@ namespace ActionFit.Connectivity
             catch (OperationCanceledException)
             {
             }
+        }
+
+        private async Task<bool> CheckOnlineMonitoringAsync(CancellationToken cancellationToken)
+        {
+            await _checkGate.WaitAsync(cancellationToken);
+            ConnectivityState stateBeforeCheck = _lastStableState;
+            CancellationTokenSource pauseCancellation = null;
+            CancellationTokenSource graceDeadlineCancellation = null;
+            CancellationTokenSource linkedCancellation = null;
+            bool graceActive = false;
+
+            try
+            {
+                SetState(ConnectivityState.Checking);
+                if (await ProbeOnceAsync(cancellationToken))
+                {
+                    SetState(ConnectivityState.Online);
+                    return true;
+                }
+
+                if (stateBeforeCheck != ConnectivityState.Online)
+                    return await CompleteConfiguredRetriesAfterFailureAsync(cancellationToken);
+
+                pauseCancellation = new CancellationTokenSource();
+                _monitoringGraceCancellation = pauseCancellation;
+                if (_options.MonitoringDisconnectGrace > TimeSpan.Zero)
+                {
+                    graceDeadlineCancellation = new CancellationTokenSource();
+                    graceDeadlineCancellation.CancelAfter(_options.MonitoringDisconnectGrace);
+                    linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                        cancellationToken,
+                        pauseCancellation.Token,
+                        graceDeadlineCancellation.Token);
+                }
+
+                graceActive = true;
+                MonitoringDisconnectGraceStarted?.Invoke();
+
+                if (_options.MonitoringDisconnectGrace <= TimeSpan.Zero)
+                {
+                    EndMonitoringGrace(ref graceActive, ConnectivityGraceOutcome.ConfirmedOffline);
+                    SetState(ConnectivityState.Offline);
+                    return false;
+                }
+
+                while (true)
+                {
+                    await _delay.DelayAsync(
+                        MonitoringGraceRetryInterval,
+                        linkedCancellation.Token);
+                    if (!await ProbeOnceAsync(linkedCancellation.Token)) continue;
+
+                    EndMonitoringGrace(ref graceActive, ConnectivityGraceOutcome.Recovered);
+                    SetState(ConnectivityState.Online);
+                    return true;
+                }
+            }
+            catch (OperationCanceledException)
+                when (graceActive
+                      && graceDeadlineCancellation != null
+                      && graceDeadlineCancellation.IsCancellationRequested
+                      && !cancellationToken.IsCancellationRequested
+                      && !pauseCancellation.IsCancellationRequested)
+            {
+                EndMonitoringGrace(ref graceActive, ConnectivityGraceOutcome.ConfirmedOffline);
+                SetState(ConnectivityState.Offline);
+                return false;
+            }
+            catch (OperationCanceledException)
+            {
+                EndMonitoringGrace(ref graceActive, ConnectivityGraceOutcome.Cancelled);
+                SetState(stateBeforeCheck);
+                if (pauseCancellation != null
+                    && pauseCancellation.IsCancellationRequested
+                    && !cancellationToken.IsCancellationRequested)
+                {
+                    return stateBeforeCheck == ConnectivityState.Online;
+                }
+
+                throw;
+            }
+            catch
+            {
+                EndMonitoringGrace(ref graceActive, ConnectivityGraceOutcome.Cancelled);
+                SetState(stateBeforeCheck);
+                throw;
+            }
+            finally
+            {
+                if (ReferenceEquals(_monitoringGraceCancellation, pauseCancellation))
+                    _monitoringGraceCancellation = null;
+                linkedCancellation?.Dispose();
+                graceDeadlineCancellation?.Dispose();
+                pauseCancellation?.Dispose();
+                _checkGate.Release();
+            }
+        }
+
+        private async Task<bool> CompleteConfiguredRetriesAfterFailureAsync(
+            CancellationToken cancellationToken)
+        {
+            for (int retry = 0; retry < _options.MaxRetryCount; retry++)
+            {
+                await _delay.DelayAsync(_options.RetryInterval, cancellationToken);
+                if (!await ProbeOnceAsync(cancellationToken)) continue;
+
+                SetState(ConnectivityState.Online);
+                return true;
+            }
+
+            SetState(ConnectivityState.Offline);
+            return false;
+        }
+
+        private void CancelMonitoringGrace()
+        {
+            CancellationTokenSource cancellation = _monitoringGraceCancellation;
+            if (cancellation == null || cancellation.IsCancellationRequested) return;
+            cancellation.Cancel();
+        }
+
+        private void EndMonitoringGrace(
+            ref bool graceActive,
+            ConnectivityGraceOutcome outcome)
+        {
+            if (!graceActive) return;
+
+            graceActive = false;
+            MonitoringDisconnectGraceEnded?.Invoke(outcome);
         }
 
         private void SetState(ConnectivityState state)

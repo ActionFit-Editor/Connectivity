@@ -20,6 +20,14 @@ namespace ActionFit.Connectivity
         NotReachable
     }
 
+    /// <summary>Describes how an automatic-monitoring disconnect grace ended.</summary>
+    public enum ConnectivityGraceOutcome
+    {
+        Recovered,
+        ConfirmedOffline,
+        Cancelled
+    }
+
     public interface IConnectivityReachabilityProvider
     {
         ConnectivityReachability Current { get; }
@@ -146,7 +154,8 @@ namespace ActionFit.Connectivity
             float probeTimeoutSeconds,
             float checkIntervalSeconds,
             float retryIntervalSeconds,
-            int maxRetryCount)
+            int maxRetryCount,
+            float monitoringDisconnectGraceSeconds = 0f)
         {
             if (!Uri.TryCreate(probeUrl, UriKind.Absolute, out Uri endpoint)
                 || (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps))
@@ -161,12 +170,15 @@ namespace ActionFit.Connectivity
                 throw new ArgumentOutOfRangeException(nameof(retryIntervalSeconds));
             if (maxRetryCount < 0)
                 throw new ArgumentOutOfRangeException(nameof(maxRetryCount));
+            if (monitoringDisconnectGraceSeconds < 0f)
+                throw new ArgumentOutOfRangeException(nameof(monitoringDisconnectGraceSeconds));
 
             ProbeEndpoint = endpoint;
             ProbeTimeout = TimeSpan.FromSeconds(probeTimeoutSeconds);
             CheckInterval = TimeSpan.FromSeconds(checkIntervalSeconds);
             RetryInterval = TimeSpan.FromSeconds(retryIntervalSeconds);
             MaxRetryCount = maxRetryCount;
+            MonitoringDisconnectGrace = TimeSpan.FromSeconds(monitoringDisconnectGraceSeconds);
         }
 
         public Uri ProbeEndpoint { get; }
@@ -174,5 +186,7 @@ namespace ActionFit.Connectivity
         public TimeSpan CheckInterval { get; }
         public TimeSpan RetryInterval { get; }
         public int MaxRetryCount { get; }
+        /// <summary>Maximum time automatic monitoring keeps the last Online state after a failed probe.</summary>
+        public TimeSpan MonitoringDisconnectGrace { get; }
     }
 }

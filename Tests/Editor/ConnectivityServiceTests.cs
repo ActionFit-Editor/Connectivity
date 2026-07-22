@@ -144,6 +144,150 @@ namespace ActionFit.Connectivity.Tests
         }
 
         [Test]
+        public async Task Monitoring_OnlineTransientFailure_PublishesGraceAndRecoversWithoutOffline()
+        {
+            var probe = new QueueProbe(true, false, true);
+            var delay = new ControlledDelay();
+            ConnectivityService service = CreateService(
+                probe,
+                delay: delay,
+                monitoringDisconnectGraceSeconds: 2f);
+            var outcomes = new List<ConnectivityGraceOutcome>();
+            int startCount = 0;
+            service.MonitoringDisconnectGraceStarted += () => startCount++;
+            service.MonitoringDisconnectGraceEnded += outcomes.Add;
+
+            Assert.That(await service.CheckNowAsync(), Is.True);
+            service.StartMonitoring();
+            await WaitUntilAsync(() => startCount == 1 && delay.CallCount == 1);
+
+            delay.ReleaseNext();
+            await WaitUntilAsync(() => outcomes.Count == 1 && delay.CallCount == 2);
+
+            Assert.That(outcomes, Is.EqualTo(new[] { ConnectivityGraceOutcome.Recovered }));
+            Assert.That(service.State, Is.EqualTo(ConnectivityState.Online));
+            Assert.That(probe.CallCount, Is.EqualTo(3));
+            service.StopMonitoring();
+        }
+
+        [Test]
+        public async Task Monitoring_InitialUnknownFailure_UsesConfiguredRetriesWithoutGrace()
+        {
+            var probe = new QueueProbe(false, false);
+            var delay = new ControlledDelay();
+            ConnectivityService service = CreateService(
+                probe,
+                delay: delay,
+                maxRetryCount: 1,
+                monitoringDisconnectGraceSeconds: 2f);
+            int startCount = 0;
+            service.MonitoringDisconnectGraceStarted += () => startCount++;
+
+            service.StartMonitoring();
+            await WaitUntilAsync(() => delay.CallCount == 1);
+            delay.ReleaseNext();
+            await WaitUntilAsync(
+                () => service.State == ConnectivityState.Offline && delay.CallCount == 2);
+
+            Assert.That(startCount, Is.Zero);
+            Assert.That(probe.CallCount, Is.EqualTo(2));
+            service.StopMonitoring();
+        }
+
+        [Test]
+        public async Task Monitoring_OnlineFailure_EndsGraceBeforePublishingOffline()
+        {
+            var probe = new QueueProbe(true, false);
+            var delay = new ControlledDelay();
+            ConnectivityService service = CreateService(
+                probe,
+                delay: delay,
+                monitoringDisconnectGraceSeconds: 0.02f);
+            var publications = new List<string>();
+            service.StateChanged += state => publications.Add($"state:{state}");
+            service.MonitoringDisconnectGraceStarted += () => publications.Add("grace:start");
+            service.MonitoringDisconnectGraceEnded += outcome =>
+                publications.Add($"grace:end:{outcome}");
+
+            Assert.That(await service.CheckNowAsync(), Is.True);
+            service.StartMonitoring();
+            await WaitUntilAsync(() => publications.Contains("state:Offline"));
+
+            Assert.That(
+                publications.IndexOf("grace:end:ConfirmedOffline"),
+                Is.LessThan(publications.IndexOf("state:Offline")));
+            Assert.That(service.State, Is.EqualTo(ConnectivityState.Offline));
+            service.StopMonitoring();
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public async Task Monitoring_ActiveGraceCancelledByLifecycle_RestoresOnline(bool pause)
+        {
+            var probe = new QueueProbe(true, false);
+            var delay = new ControlledDelay();
+            ConnectivityService service = CreateService(
+                probe,
+                delay: delay,
+                monitoringDisconnectGraceSeconds: 2f);
+            var outcomes = new List<ConnectivityGraceOutcome>();
+            service.MonitoringDisconnectGraceEnded += outcomes.Add;
+
+            Assert.That(await service.CheckNowAsync(), Is.True);
+            service.StartMonitoring();
+            await WaitUntilAsync(() => delay.CallCount == 1);
+
+            if (pause) service.Pause();
+            else service.StopMonitoring();
+            await WaitUntilAsync(() => outcomes.Count == 1);
+
+            Assert.That(outcomes, Is.EqualTo(new[] { ConnectivityGraceOutcome.Cancelled }));
+            Assert.That(service.State, Is.EqualTo(ConnectivityState.Online));
+            if (pause) service.StopMonitoring();
+        }
+
+        [Test]
+        public async Task Monitoring_ActiveGraceProbeException_PublishesCancelledAndRestoresOnline()
+        {
+            var probe = new ThrowingGraceProbe();
+            var delay = new ControlledDelay();
+            ConnectivityService service = CreateService(
+                probe,
+                delay: delay,
+                monitoringDisconnectGraceSeconds: 2f);
+            var outcomes = new List<ConnectivityGraceOutcome>();
+            service.MonitoringDisconnectGraceEnded += outcomes.Add;
+
+            Assert.That(await service.CheckNowAsync(), Is.True);
+            service.StartMonitoring();
+            await WaitUntilAsync(() => delay.CallCount == 1);
+            delay.ReleaseNext();
+            await WaitUntilAsync(() => outcomes.Count == 1);
+
+            Assert.That(outcomes, Is.EqualTo(new[] { ConnectivityGraceOutcome.Cancelled }));
+            Assert.That(service.State, Is.EqualTo(ConnectivityState.Online));
+            service.StopMonitoring();
+        }
+
+        [Test]
+        public async Task ExplicitRetry_DoesNotPublishMonitoringGrace()
+        {
+            var probe = new QueueProbe(true, false, false);
+            ConnectivityService service = CreateService(
+                probe,
+                maxRetryCount: 1,
+                monitoringDisconnectGraceSeconds: 2f);
+            int startCount = 0;
+            service.MonitoringDisconnectGraceStarted += () => startCount++;
+
+            Assert.That(await service.CheckNowAsync(), Is.True);
+            Assert.That(await service.CheckWithRetryAsync(), Is.False);
+
+            Assert.That(startCount, Is.Zero);
+            Assert.That(service.State, Is.EqualTo(ConnectivityState.Offline));
+        }
+
+        [Test]
         public async Task CancelledInFlightCheck_RestoresLastStableState()
         {
             var probe = new CancellableAfterFirstProbe();
@@ -194,6 +338,19 @@ namespace ActionFit.Connectivity.Tests
         public void Options_RejectInvalidProbeUrl(string probeUrl)
         {
             Assert.Throws<ArgumentException>(() => new ConnectivityOptions(probeUrl, 2f, 10f, 1f, 1));
+        }
+
+        [Test]
+        public void Options_RejectNegativeMonitoringDisconnectGrace()
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                new ConnectivityOptions(
+                    "https://example.com/connectivity",
+                    2f,
+                    10f,
+                    1f,
+                    1,
+                    -0.1f));
         }
 
         [TestCase(null)]
@@ -270,9 +427,9 @@ namespace ActionFit.Connectivity.Tests
 
         private static async Task WaitUntilAsync(Func<bool> predicate)
         {
-            for (int i = 0; i < 100 && !predicate(); i++)
+            for (int i = 0; i < 500 && !predicate(); i++)
             {
-                await Task.Yield();
+                await Task.Delay(1);
             }
             Assert.That(predicate(), Is.True, "Timed out waiting for the asynchronous test condition.");
         }
@@ -281,7 +438,8 @@ namespace ActionFit.Connectivity.Tests
             IConnectivityProbe probe,
             FakeReachability reachability = null,
             IConnectivityDelay delay = null,
-            int maxRetryCount = 1)
+            int maxRetryCount = 1,
+            float monitoringDisconnectGraceSeconds = 0f)
         {
             return new ConnectivityService(
                 reachability ?? new FakeReachability(ConnectivityReachability.Reachable),
@@ -291,7 +449,8 @@ namespace ActionFit.Connectivity.Tests
                     2f,
                     10f,
                     1f,
-                    maxRetryCount),
+                    maxRetryCount,
+                    monitoringDisconnectGraceSeconds),
                 delay ?? new FakeDelay());
         }
 
@@ -343,6 +502,23 @@ namespace ActionFit.Connectivity.Tests
                     TaskCreationOptions.RunContinuationsAsynchronously);
                 cancellationToken.Register(() => completion.TrySetCanceled());
                 return completion.Task;
+            }
+        }
+
+        private sealed class ThrowingGraceProbe : IConnectivityProbe
+        {
+            private int _callCount;
+
+            public Task<bool> ProbeAsync(
+                Uri endpoint,
+                TimeSpan timeout,
+                CancellationToken cancellationToken)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                _callCount++;
+                if (_callCount == 1) return Task.FromResult(true);
+                if (_callCount == 2) return Task.FromResult(false);
+                throw new InvalidOperationException("Injected active-grace probe failure.");
             }
         }
 

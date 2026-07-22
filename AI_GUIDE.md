@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.connectivity`
 - Display name: ActionFit Connectivity
 - Repository: `https://github.com/ActionFit-Editor/Connectivity.git`
-- Current package version at generation time: `1.0.5`
+- Current package version at generation time: `1.0.6`
 - Unity version: `6000.2`
 - Runtime dependency: Unity built-in module `com.unity.modules.unitywebrequest` `1.0.0`
 
@@ -46,11 +46,13 @@ Read this file when:
 - `IConnectivityProbe` performs the real remote check. Operational network failures should return `false`; cancellation should propagate.
 - `IConnectivityObservationProbe` performs one bounded HTTPS observation and returns connectivity success, response code, parsed UTC `Date`, optional parsed `Age`, and round-trip duration without exposing response bodies or arbitrary raw headers.
 - `ConnectivityObservation.HasFreshServerDate` requires successful HTTP 2xx/3xx connectivity, a valid UTC `Date`, a valid absent-or-nonnegative `Age`, and `Age` absent or zero.
-- `ConnectivityOptions` validates an absolute HTTP/HTTPS endpoint, positive timeout/check interval values, and a non-negative retry interval.
+- `ConnectivityOptions` validates an absolute HTTP/HTTPS endpoint, positive timeout/check interval values, a non-negative retry interval, and a non-negative automatic-monitoring disconnect grace.
 - `ConnectivityService.CheckNowAsync` runs one attempt.
 - `ConnectivityService.CheckWithRetryAsync` runs one immediate attempt plus `MaxRetryCount` retries.
 - `WaitForOnlineAsync` only waits for a later Online state. It does not start monitoring or perform hidden network work.
 - `StartMonitoring` runs immediately and then waits `CheckInterval`; while paused it skips checks and waits `RetryInterval` before observing state again.
+- When automatic monitoring starts from the last stable Online state, the first failed probe publishes `MonitoringDisconnectGraceStarted` exactly once. Recovery within `MonitoringDisconnectGrace` publishes `MonitoringDisconnectGraceEnded(Recovered)` without publishing Offline. Expiration publishes `MonitoringDisconnectGraceEnded(ConfirmedOffline)` before Offline. Pause, stop, cancellation, or an unexpected exception publishes `MonitoringDisconnectGraceEnded(Cancelled)` and restores the previous stable state.
+- Initial Unknown checks, checks while already Offline, `CheckNowAsync`, and `CheckWithRetryAsync` do not enter the automatic-monitoring disconnect grace.
 - `ResumeAsync` clears Pause and runs one immediate check.
 
 The service serializes concurrent checks and restores the last stable state if cancellation or an unexpected probe exception interrupts a `Checking` state.
@@ -75,12 +77,13 @@ Preserve these compatibility behaviors:
 - `InternetCheck.IsConnected` starts with the legacy optimistic `true` value until the first stable result.
 - `OnDisconnected`, `OnReconnected`, and `OnStatusChanged` do not fire for Unknown or Checking.
 - `OnStartupConnectionWaitBegan` and `OnStartupConnectionWaitEnded` remain project UI events, not package events.
-- `InternetCheckSO` serialized field names and Resources path remain unchanged.
+- `InternetCheckSO` preserves existing serialized field names and registers a RuntimeSingleton canonical asset at `Assets/_Data/_Connectivity/Resources/SO/InternetCheckSO.asset`, with the former `_Project/_Shared/Resources/SO` path declared as legacy discovery input.
+- `InternetCheckSO.MonitoringDisconnectGraceSec` maps to the package grace and defaults to the Cat project value of two seconds.
 - Existing UI, ads, analytics, Firebase, and game initialization callers should not reference the package directly unless a separate migration is approved.
 
 ## Testing And Failure Rules
 
-- Run `com.actionfit.connectivity.Editor.Tests` in EditMode. Test Unknown initial state, Checking-to-stable transitions, OS NotReachable short-circuit, reachable/unknown probe use, retry count, later recovery, cancellation restoration, recovery wait, Pause/Resume, and fallback ordering.
+- Run `com.actionfit.connectivity.Editor.Tests` in EditMode. Test Unknown initial state, Checking-to-stable transitions, OS NotReachable short-circuit, reachable/unknown probe use, retry count, later recovery, cancellation restoration, monitoring grace recovery/expiration/cancellation ordering, recovery wait, Pause/Resume, and fallback ordering.
 - Do not use a real public endpoint in unit tests. Inject fake reachability, probe, and delay implementations.
 - Test observation parsing with fixed headers and round-trip durations. A positive or malformed `Age`, missing or malformed `Date`, HTTP failure, or cancellation must not produce a fresh server date.
 - A probe cancellation is not Offline. Restore the last stable state and propagate cancellation.
