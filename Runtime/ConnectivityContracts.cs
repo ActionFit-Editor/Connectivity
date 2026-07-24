@@ -136,6 +136,10 @@ namespace ActionFit.Connectivity
         bool IsPaused { get; }
         bool IsMonitoring { get; }
 
+        /// <summary>
+        /// Published for every actual state transition, including Checking and stable-state restoration.
+        /// Consumers that need only availability should map Online and Offline in their project adapter.
+        /// </summary>
         event Action<ConnectivityState> StateChanged;
 
         Task<bool> CheckNowAsync(CancellationToken cancellationToken = default);

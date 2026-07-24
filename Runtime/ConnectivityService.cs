@@ -36,12 +36,24 @@ namespace ActionFit.Connectivity
         public bool IsPaused => _isPaused;
         public bool IsMonitoring => _monitorTask != null;
 
+        /// <summary>
+        /// Published for every actual state transition, including Checking and stable-state restoration.
+        /// Use a project adapter to map only Online and Offline when a boolean availability event is required.
+        /// </summary>
         public event Action<ConnectivityState> StateChanged;
 
-        /// <summary>Published once after an Online monitor's first failed probe.</summary>
+        /// <summary>
+        /// Published once after an Online monitor's first failed probe starts disconnect grace.
+        /// Connect reversible protection such as cancelling active input or acquiring a scoped input lock;
+        /// do not open confirmed-offline UI until grace expires.
+        /// </summary>
         public event Action MonitoringDisconnectGraceStarted;
 
-        /// <summary>Published once before the monitor restores Online or publishes Offline.</summary>
+        /// <summary>
+        /// Published once before the monitor restores Online or publishes Offline.
+        /// Release every resource owned by the grace scope for all outcomes. ConfirmedOffline is published
+        /// before StateChanged(Offline), allowing input protection to be released before reconnect UI opens.
+        /// </summary>
         public event Action<ConnectivityGraceOutcome> MonitoringDisconnectGraceEnded;
 
         /// <summary>Runs one reachability and probe attempt and publishes the resulting stable state.</summary>

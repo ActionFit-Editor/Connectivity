@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.connectivity`
 - Display name: ActionFit Connectivity
 - Repository: `https://github.com/ActionFit-Editor/Connectivity.git`
-- Current package version at generation time: `1.0.6`
+- Current package version at generation time: `1.0.7`
 - Unity version: `6000.2`
 - Runtime dependency: Unity built-in module `com.unity.modules.unitywebrequest` `1.0.0`
 
@@ -58,6 +58,17 @@ Read this file when:
 The service serializes concurrent checks and restores the last stable state if cancellation or an unexpected probe exception interrupts a `Checking` state.
 
 The public async contract deliberately uses the BCL `Task` type so the reusable package does not require a consuming project to install UniTask. Cat Merge Cafe may await those tasks from its UniTask-based compatibility facade.
+
+## Event Integration Guidance
+
+- `StateChanged` publishes every actual transition, including `Checking` and restoration to a previous stable state. Consumers that need only a boolean availability contract should map `Online` and `Offline` in a project adapter rather than treating every event as a stable result.
+- Use `MonitoringDisconnectGraceStarted` for reversible protection such as cancelling active pointer input, acquiring a scoped input lock, or pausing a network-dependent mutation. Do not open confirmed-offline UI at grace start.
+- On every `MonitoringDisconnectGraceEnded` outcome, release only resources owned by that grace scope.
+  - `Recovered` restores Online without publishing Offline.
+  - `ConfirmedOffline` is published before `StateChanged(Offline)`, allowing an adapter to release input protection before opening reconnect UI from its Offline handler.
+  - `Cancelled` restores the previous stable state and must not open confirmed-offline UI.
+- Startup wait UI, SDK gates, popup selection, and lifecycle-specific subscription ownership remain in the consuming project. Compose them around `CheckNowAsync`, `CheckWithRetryAsync`, and `WaitForOnlineAsync` without adding UI dependencies to this package.
+- Pair subscription and unsubscription at the same service or screen lifetime. `StopMonitoring` does not remove subscribers.
 
 ## Unity Adapters
 
